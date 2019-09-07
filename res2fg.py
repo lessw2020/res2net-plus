@@ -4,6 +4,7 @@
 """
 Implementation of Res2Net
 based on https://github.com/gasvn/Res2Net
+then based on - credit:  https://github.com/frgfm/Holocron/blob/master/holocron/models/res2net.py
 """
 
 import torch
