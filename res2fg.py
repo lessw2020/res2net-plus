@@ -2,9 +2,22 @@
 # -*- coding: utf-8 -*-
 
 """
-Implementation of Res2Net
-based on https://github.com/gasvn/Res2Net
-then based on - credit:  https://github.com/frgfm/Holocron/blob/master/holocron/models/res2net.py
+Implementation of Res2Net with extended modifications (Res2Net-Plus):
+Improvements:  3x3 stem instead of 7x7, BN before activation, Mish activation instead of ReLU
+
+this file: https://github.com/lessw2020/res2net-plus
+
+all based on original paper and impl:
+https://arxiv.org/abs/1904.01169v2
+
+then based on https://github.com/gasvn/Res2Net
+
+then based on:
+https://github.com/frgfm/Holocron/blob/master/holocron/models/res2net.py
+
+and finally:
+https://github.com/lessw2020/res2net-plus
+
 """
 
 import torch
@@ -42,8 +55,11 @@ def conv(ni, nf, ks=3, stride=1, bias=False):
     return nn.Conv2d(ni, nf, kernel_size=ks, stride=stride, padding=ks//2, bias=bias)
 
 
-RESNET_LAYERS = {18: [2, 2, 2, 2], 34: [3, 4, 6, 3], 50: [3, 4, 6, 3],
-                 101: [3, 4, 23, 3], 152: [3, 8, 36, 3]}
+RESNET_LAYERS = {18: [2, 2, 2, 2], 
+                 34: [3, 4, 6, 3], 
+                 50: [3, 4, 6, 3],
+                 101: [3, 4, 23, 3], 
+                 152: [3, 8, 36, 3]}
 
 RES2NEXT_PARAMS = {50: dict(groups=8, width_per_group=4),
                    101: dict(groups=8, width_per_group=8)}
@@ -97,8 +113,9 @@ class Res2Block(nn.Module):
         self.scale = scale
 
         self.conv3 = conv1x1(width * scale, planes * self.expansion)
-        self.bn3 = norm_layer(planes * self.expansion)
+        
         self.relu = Mish() #nn.ReLU(inplace=False)
+        self.bn3 = norm_layer(planes * self.expansion)  #bn reverse
 
         self.downsample = downsample
 
@@ -107,8 +124,9 @@ class Res2Block(nn.Module):
         residual = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
+        
         out = self.relu(out)
+        out = self.bn1(out) #bn reverse
 
         # Chunk the feature map
         xs = torch.chunk(out, self.scale, dim=1)
@@ -145,8 +163,13 @@ class Res2Block(nn.Module):
 def conv_layer(ni, nf, ks=3, stride=1, zero_bn=False, act=True):
     bn = nn.BatchNorm2d(nf)
     nn.init.constant_(bn.weight, 0. if zero_bn else 1.)
-    layers = [conv(ni, nf, ks, stride=stride), bn]
-    if act: layers.append(act_fn)
+    if act:
+        layers = [conv(ni, nf, ks, stride=stride), act_fn, bn]
+    else:
+        layers = [conv(ni, nf, ks, stride=stride), bn]
+        
+    
+    #if act: layers.append(act_fn)
     return nn.Sequential(*layers)
 
 
@@ -188,12 +211,13 @@ class Res2Net(nn.Module):
         #self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
         #                       bias=False)
         #modify stem
-        stem = []
+        #stem = []
         sizes = [c_in,32,64,64]  #modified per Grankin
         #for i in range(3):
         #    stem.append(conv_layer(sizes[i], sizes[i+1], stride=2 if i==0 else 1))
-        self.conv1 = conv_layer(c_in, sizes[1], stride=2)
         
+        #stem (initial entry layers)
+        self.conv1 = conv_layer(c_in, sizes[1], stride=2)
         self.conv2 = conv_layer(sizes[1],sizes[2])
         self.conv3 = conv_layer(sizes[2],sizes[3])
         
@@ -254,12 +278,15 @@ class Res2Net(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        
+        #stem layers
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
         
         x = self.maxpool(x)
-
+        
+        #res2 block layers
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -272,7 +299,7 @@ class Res2Net(nn.Module):
         return x
 
 #26 s=4
-def res2net(depth, num_classes, width_per_group=26, scale=4, pretrained=False, progress=True, **kwargs):
+def res2net(depth=50, num_classes=10, width_per_group=26, scale=4, pretrained=False, progress=True, **kwargs):
     """Instantiate a Res2Net model
     Args:
         depth (int): depth of the model
